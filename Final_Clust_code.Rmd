@@ -1,0 +1,339 @@
+---
+title: "Final_Clustering_Code"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+dataf <- read.csv(file="C:/Users/ChowdhKa/Documents/OctDataSmall.csv")
+
+#----------MAKING THE DATA FRAME-----------#
+#adding column names to the file
+names(dataf)<- c('date','date1','channel','p1','p2','occupancy')
+head(dataf)
+
+
+#-----------------------------Data CleanUp----------------------------------------------------------
+
+#empty data frame to store channel and percentage reading
+new_data_channel <- data.frame(matrix(ncol = 2, nrow = 7959))
+y <- c("channel", "per_read")
+colnames(new_data_channel) <- y
+
+# variable to store unique channel values
+chlist <- as.list(unique(dataf$channel))
+
+x <- list ()
+
+d <-data.frame(Index = dataf['date']) 
+d <- d[order(as.Date(d$date,format="%d/%m/%Y")),,drop=FALSE]
+
+# find first element of this d dataframe
+time.min <- d$date[1]
+time.min <- as.POSIXct(time.min)
+
+# find last element of this d dataframe
+time.max <- d$date[nrow(d)]
+time.max <- as.POSIXct(time.max)
+
+all.dates <- seq(time.min, time.max, by="hour") 
+indexed = length(all.dates)
+
+for(i in 1:length(chlist))
+{
+  newdataf_new <- subset(dataf, channel == as.integer(chlist[[i]]), select= date:occupancy) 
+  
+  d <-data.frame(Index = newdataf_new['date']) 
+  original = as.numeric(nrow(d))
+  
+  Percentccupied = (original/indexed)*100 
+  
+  append(x,Percentccupied)
+  
+  new_data_channel$channel[i] <- chlist[[i]][[1]]
+  new_data_channel$per_read[i] <- Percentccupied
+}
+
+
+#----------------------------------Quantiles-------
+#Quantiles used for understanding threshold 
+v <- quantile(new_data_channel$per_read, probs = c(0, 0.25, 0.5, 0.75, 1))
+thresh_quantile <- v[4]
+thresh_quantile
+#------------------------------------------------------------
+#for loop on quantiles; if percentage reading less than threshold put 0 
+for(i in 1:nrow(new_data_channel))
+{
+  if(new_data_channel$per_read[i] < thresh_quantile)
+  {
+    new_data_channel$per_read[i] <- 0
+  }
+}
+#Getting the final data frame by removing channel whose values are less than threshold 
+newdataf_new <- subset(new_data_channel, per_read != 0, select= channel:per_read)
+
+#-------------------------Merge Data Frame---------------
+#merging the channel with ouetr join
+dataf_merge <- merge(dataf, newdataf_new, by = "channel") 
+nrow(dataf_merge)
+length(unique(dataf_merge$channel))
+
+#---------------Descriptive analysis------------------------
+#-----function for mode ---------#
+#function to get 
+getmode <-function(v){
+  uniqv<-unique(v)
+  uniqv[which.max(tabulate(match(v,uniqv)))]
+}
+
+#-----------------Data Frame creation---------------------#
+#calculating the mean of the channel
+newdataf2 <- aggregate(dataf_merge[, 6], list(dataf_merge$channel), mean)
+names(newdataf2) <- c('channel','occupancy')
+head(newdataf2)
+
+#calculating the median  of the channel 
+newdataf3 <- aggregate(dataf_merge[, 6], list(dataf_merge$channel), median)
+names(newdataf3) <- c('channel','occupancy')
+head(newdataf3)
+
+#calculating the var  of the channel 
+newdataf4 <- aggregate(dataf_merge[, 6], list(dataf_merge$channel), var)
+names(newdataf4) <- c('channel','occupancy')
+head(newdataf4)
+
+newdata5 <- aggregate(dataf_merge[, 6], list(dataf_merge$channel), getmode)
+names(newdata5) <- c('channel','occupancy')
+head(newdata5)
+
+#merge the above data frame to get a single dat frame with mean, median, var and channel
+newmerge <- merge(newdataf3,newdata5, by = 'channel')
+newmerge2 <- merge(newmerge,newdataf2, by = 'channel')
+names(newmerge2) <- c('channel','median_channel','mode_channel','mean_channel')
+
+#merge to find the final data frame with mean,median,var,mode
+newmerge1 <- merge(newmerge2,newdataf4, by = 'channel')
+
+
+names(newmerge1) <- c('channel','median_channel','mode_channel','mean_channel','var_channel')
+head(newmerge1)
+
+
+#Input dimensions
+newmerge1$mean_median <- newmerge1$mean_channel - newmerge1$median_channel
+newmerge1$mode_mean <- newmerge1$mode_channel - newmerge1$mean_channel
+newmerge1$median_mode <- newmerge1$median_channel - newmerge1$mode_channel
+
+#If the mean is greater than the mode, the distribution is positively skewed.
+#If the mean is less than the mode, the distribution is negatively skewed.
+#If the mean is greater than the median, the distribution is positively skewed.
+#If the mean is less than the median, the distribution is negatively skewed.
+
+head(newmerge1)
+
+newmerge1 <- na.omit(newmerge1)
+
+#------------------------------kmean clustering-------------------------------------#
+
+set.seed(125)
+fit <- kmeans(newmerge1[, 4:8],4, 10,nstart = 4)
+
+fit$centers
+
+#getting the cluster for the data
+out <- cbind(newmerge1, clusterNum = fit$cluster)
+head(out)
+
+out_subset_1 <- subset(out, clusterNum == 1, select= channel:clusterNum)
+
+out_subset_2 <- subset(out, clusterNum == 2, select= channel:clusterNum)
+
+out_subset_3 <- subset(out, clusterNum == 3, select= channel:clusterNum)
+
+out_subset_4 <- subset(out, clusterNum == 4, select= channel:clusterNum)
+
+#getting the centroids for the clusters
+fit$centers
+fit$size
+
+#--------------------Histogram for 4 channels ---------------------------
+
+#another subset for creating histogram with partially occupied or normal distribution
+# in the middle range
+newdataf_partial <- subset(dataf, channel == 6811, select= date:occupancy)
+#nrow(newdataf_partial)
+hist(newdataf_partial$occupancy)
+
+#another subset for creating histogram with unoccupied
+newdataf_unoccu <- subset(dataf, channel == 3880, select= date:occupancy)
+#nrow(newdataf_unoccu)
+#head(newdataf1)
+hist(newdataf_unoccu$occupancy)
+
+#another subset for creating histogram with occupied
+newdataf_occu <- subset(dataf, channel == 25950, select= date:occupancy)
+#nrow(newdataf_occu)
+#head(newdataf1)
+hist(newdataf_occu$occupancy)
+
+#another subset for creating histogram with either case
+newdataf_either <- subset(dataf, channel == 56358, select= date:occupancy)
+#nrow(newdataf_either)
+#head(newdataf1)
+hist(newdataf_either$occupancy)
+
+
+#-----------------------Histogram distance calculation --------------------
+
+#------------------Cluster 1 test --------------------------
+#install.packages("transport")
+library(transport)
+
+
+actual_clust1 <- list()
+final_list1 <- list()
+channellist <- as.list(unique(out_subset_1$channel))
+
+
+for(i in 1:length(channellist))
+{
+
+  newdataf_new1 <- subset(dataf, channel == as.integer(channel[[i]]), select= occupancy) 
+
+  D1 <- wasserstein1d(newdataf_new1$occupancy, newdataf_partial$occupancy, p = 1, wa = NULL, wb = NULL)
+  D2 <- wasserstein1d(newdataf_new1$occupancy, newdataf_unoccu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D3 <- wasserstein1d(newdataf_new1$occupancy, newdataf_occu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D4 <- wasserstein1d(newdataf_new1$occupancy, newdataf_either$occupancy, p = 1, wa = NULL, wb = NULL)
+  
+
+  v <- c(D1,D2,D3,D4)
+  min_v <- which.min(v)
+  #print(min_v)
+  
+  actual_clust1 <- append(actual_clust1,min_v)
+}
+
+for(i in 1:4)
+{
+ h <-  length(actual_clust1[actual_clust1 == i])
+  final_list1 <- append(final_list1,h)
+}
+final_list1
+#Result - Cluster 1 belongs to either case
+
+
+#--------------------Cluster 2 Test ---------------------
+
+
+
+actual_clust2 <- list()
+final_list2 <- list()
+channellist2 <- as.list(unique(out_subset_2$channel))
+
+for(i in 1:length(channellist2))
+{
+
+  newdataf_new2 <- subset(dataf, channel == as.integer(channellist2[[i]]), select= occupancy) 
+  
+  D1_2 <- wasserstein1d(newdataf_new2$occupancy, newdataf_partial$occupancy, p = 1, wa = NULL, wb = NULL)
+  D2_2 <- wasserstein1d(newdataf_new2$occupancy, newdataf_unoccu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D3_2 <- wasserstein1d(newdataf_new2$occupancy, newdataf_occu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D4_2 <- wasserstein1d(newdataf_new2$occupancy, newdataf_either$occupancy, p = 1, wa = NULL, wb = NULL)
+  
+  v <- c(D1_2,D2_2,D3_2,D4_2)
+  min_v <- which.min(v)
+  #print(min_v)
+  
+  actual_clust2 <- append(actual_clust2,min_v)
+}
+
+for(i in 1:4)
+{
+  h <-  length(actual_clust2[actual_clust2 == i])
+  final_list2 <- append(final_list2,h)
+}
+final_list2
+#Result - Cluster 2 belongs to partial
+
+
+#----------------Cluster 3 test -------------------
+
+actual_clust3 <- list()
+final_list3 <- list()
+channellist3 <- as.list(unique(out_subset_3$channel))
+
+for(i in 1:length(channellist3))
+{
+  newdataf_new3 <- subset(dataf, channel == as.integer(channellist3[[i]]), select= occupancy) 
+
+  D1_3 <- wasserstein1d(newdataf_new3$occupancy, newdataf_partial$occupancy, p = 1, wa = NULL, wb = NULL)
+  D2_3 <- wasserstein1d(newdataf_new3$occupancy, newdataf_unoccu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D3_3 <- wasserstein1d(newdataf_new3$occupancy, newdataf_occu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D4_3 <- wasserstein1d(newdataf_new3$occupancy, newdataf_either$occupancy, p = 1, wa = NULL, wb = NULL)
+  
+  v <- c(D1_3,D2_3,D3_3,D4_3)
+  min_v <- which.min(v)
+  #print(min_v)
+  
+  actual_clust3 <- append(actual_clust3,min_v)
+}
+
+for(i in 1:4)
+{
+  h <-  length(actual_clust3[actual_clust3 == i])
+  final_list3 <- append(final_list3,h)
+}
+final_list3
+#Result - Cluster 3 belongs to unoccupied
+
+
+#-----------------Cluster 4 test -------------------
+
+
+actual_clust4 <- list()
+final_list4 <- list()
+channellist4 <- as.list(unique(out_subset_4$channel))
+
+for(i in 1:length(channellist4))
+{
+  newdataf_new4 <- subset(dataf, channel == as.integer(channellist4[[i]]), select= occupancy) 
+
+  D1_4 <- wasserstein1d(newdataf_new4$occupancy, newdataf_partial$occupancy, p = 1, wa = NULL, wb = NULL)
+  D2_4 <- wasserstein1d(newdataf_new4$occupancy, newdataf_unoccu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D3_4 <- wasserstein1d(newdataf_new4$occupancy, newdataf_occu$occupancy, p = 1, wa = NULL, wb = NULL)
+  D4_4 <- wasserstein1d(newdataf_new4$occupancy, newdataf_either$occupancy, p = 1, wa = NULL, wb = NULL)
+  
+  v <- c(D1_4,D2_4,D3_4,D4_4)
+  min_v <- which.min(v)
+  #print(min_v)
+  
+  actual_clust4 <- append(actual_clust4,min_v)
+}
+
+
+for(i in 1:4)
+{
+  h <-  length(actual_clust4[actual_clust4 == i])
+  final_list4 <- append(final_list4,h)
+}
+final_list4
+#Result - Cluster 4 belongs to either case
+
+##Final Results :
+#1. Cluster 1 -- either case
+#2. Cluster 2 -- partial case
+#3. Cluster 3 -- unoccupied case
+#4. Cluster 4 -- either case
+
+```
+
+
